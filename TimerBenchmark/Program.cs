@@ -3,13 +3,13 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
 using Microsoft.Extensions.Configuration;
+using System.Threading.Tasks;
 
 class Program
 {
     static bool IsAdmin()
     {
-        WindowsPrincipal principal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
-        return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
     static void Main(string[] args)
@@ -32,25 +32,44 @@ class Program
             return;
         }
 
-        int iterations = (int)Math.Round((parameters.EndValue - parameters.StartValue) / parameters.IncrementValue);
-        double totalMs = iterations * parameters.SampleValue;
-        Console.WriteLine($"Approximate worst-case estimated time for completion: {Math.Round(totalMs / 6E4, 2)}mins");
+        int iterations = (int)(((double)parameters.EndValue - parameters.StartValue) / parameters.IncrementValue);
+        double totalMinutes = (double)iterations * parameters.SampleValue / 60000;
+
+        string message = $"Approximate worst-case estimated time for completion: {Math.Round(totalMinutes, 2)}mins";
+        string details = $"Start: {parameters.StartValue}, End: {parameters.EndValue}, Increment: {parameters.IncrementValue}, Samples: {parameters.SampleValue}";
+
+        Console.WriteLine(message);
         Console.WriteLine("Worst-case is determined by assuming Sleep(1) = ~2ms with 1ms Timer Resolution");
-        Console.WriteLine($"Start: {parameters.StartValue}, End: {parameters.EndValue}, Increment: {parameters.IncrementValue}, Samples: {parameters.SampleValue}");
+        Console.WriteLine(details);
 
         KillProcess("SetTimerResolution");
-        string currentDir = Environment.CurrentDirectory;
+        string currentDirectory = Environment.CurrentDirectory;
 
-        foreach (string dependency in new[] { "SetTimerResolution.exe", "MeasureSleep.exe" })
+        string[] dependencies = { "SetTimerResolution.exe", "MeasureSleep.exe" };
+        List<string> missingDependencies = new List<string>();
+
+        Parallel.ForEach(dependencies, dependency =>
         {
-            if (!File.Exists(Path.Combine(currentDir, dependency)))
+            string fullPath = Path.Combine(currentDirectory, dependency);
+            if (!File.Exists(fullPath))
             {
-                Console.WriteLine($"error: {dependency} not exists in current directory");
-                return;
+                missingDependencies.Add(dependency);
             }
+        });
+
+        if (missingDependencies.Count > 0)
+        {
+            foreach (var missingDependency in missingDependencies)
+            {
+                Console.WriteLine($"Error: {missingDependency} does not exist in the current directory");
+            }
+            return;
         }
 
-        File.WriteAllText("results.txt", "RequestedResolutionMs,DeltaMs,STDEV");
+        using (StreamWriter sw = new StreamWriter("results.txt"))
+        {
+            sw.WriteLine("RequestedResolutionMs,DeltaMs,STDEV");
+        }
 
         for (double i = parameters.StartValue; i <= parameters.EndValue; i += parameters.IncrementValue)
         {
@@ -58,14 +77,17 @@ class Program
             Console.WriteLine($"info: benchmarking {formattedValue}");
 
             int resolution = (int)(formattedValue * 1E4);
-            Process.Start(Path.Combine(currentDir, "SetTimerResolution.exe"), $"--resolution {resolution} --no-console");
+            Task.Run(() =>
+            {
+                Process.Start(Path.Combine(currentDirectory, "SetTimerResolution.exe"), $"--resolution {resolution} --no-console");
+            }).Wait();
 
             // unexpected results if there isn't a small delay after setting the resolution
-            System.Threading.Thread.Sleep(1);
+            Task.Delay(1).Wait();
 
             ProcessStartInfo startInfo = new ProcessStartInfo
             {
-                FileName = Path.Combine(currentDir, "MeasureSleep.exe"),
+                FileName = Path.Combine(currentDirectory, "MeasureSleep.exe"),
                 Arguments = $"--samples {parameters.SampleValue}",
                 UseShellExecute = false,
                 RedirectStandardOutput = true
@@ -81,12 +103,24 @@ class Program
             foreach (string line in outputLines)
             {
                 if (line.StartsWith("Avg: "))
-                    avg = double.Parse(line.Substring(5));
+                {
+                    if (double.TryParse(line.Substring(5), out double parsedAvg))
+                    {
+                        avg = parsedAvg;
+                    }
+                }
                 else if (line.StartsWith("STDEV: "))
-                    stdev = double.Parse(line.Substring(7));
+                {
+                    if (double.TryParse(line.Substring(7), out double parsedStdev))
+                    {
+                        stdev = parsedStdev;
+                    }
+                }
             }
 
-            File.AppendAllText("results.txt", $"{formattedValue}, {Math.Round(avg, 4)}, {stdev}{Environment.NewLine}");
+            string resultLine = $"{formattedValue}, {Math.Round(avg, 4)}, {stdev}{Environment.NewLine}";
+            File.AppendAllText("results.txt", resultLine);
+
             KillProcess("SetTimerResolution");
         }
 
@@ -103,9 +137,9 @@ class Program
 
     static void KillProcess(string processName)
     {
-        foreach (Process process in Process.GetProcessesByName(processName))
-        {
-            process.Kill();
-        }
+        Process.GetProcessesByName(processName)
+               .ToList()
+               .ForEach(p => p.Kill());
     }
+
 }
