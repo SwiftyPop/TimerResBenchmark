@@ -1,6 +1,7 @@
 # TimerResBenchmark
+<p align="center"><b> TimerResBenchmark is a executable benchmark written in C# to micro-adjusting timer resolution for higher precision. The tool aims to find the best timer resolution that are closest possible sleep delays to 1ms, which is considered optimal for system performance. It is recommended to use a power plan with idle disabled to achieve consistent 1ms sleep delays and variance in the delta. </b></p> 
 
-TimerResBenchmark is a executable benchmark written in C# to micro-adjusting timer resolution for higher precision. The tool aims to find the best timer resolution that are closest possible sleep delays to 1ms, which is considered optimal for system performance. It is recommended to use a power plan with idle disabled to achieve consistent 1ms sleep delays and variance in the delta. The tool also include TimerResolution & MeasureSleep from [Amittxv's TimerRes](https://github.com/amitxv/TimerResolution/tree/main), and users can configure settings via `appsettings.json`. For a detailed explanation, visit the [Amittxv's TimerResolution](https://github.com/amitxv/TimerResolution/tree/main).
+* The tool also include TimerResolution & MeasureSleep from [Amittxv's TimerRes](https://github.com/amitxv/TimerResolution/tree/main), and users can configure settings via `appsettings.json`. For a detailed explanation, visit the [Amittxv's TimerResolution](https://github.com/amitxv/TimerResolution/tree/main).
 
 
 ![gifgit](https://github.com/SwiftyPop/TimerResBenchmark/assets/90952326/f03feefd-4bf0-4c05-893e-14570f785d3a)
