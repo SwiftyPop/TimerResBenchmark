@@ -50,7 +50,7 @@ class Program
             }
         }
 
-        StringBuilder results = new StringBuilder("RequestedResolutionMs,DeltaMs,STDEV");
+        File.WriteAllText("results.txt", "RequestedResolutionMs,DeltaMs,STDEV");
 
         for (double i = parameters.StartValue; i <= parameters.EndValue; i += parameters.IncrementValue)
         {
@@ -72,8 +72,8 @@ class Program
             };
 
             Process process = Process.Start(startInfo);
-            string output = process.StandardOutput.ReadToEndAsync().Result;
-            process.WaitForExit();
+            string output = process?.StandardOutput.ReadToEndAsync().Result;
+            process?.WaitForExit();
 
             string[] outputLines = output.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
             double avg = 0, stdev = 0;
