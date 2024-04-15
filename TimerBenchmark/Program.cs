@@ -1,18 +1,17 @@
 ﻿using System.Diagnostics;
-using System.Runtime.InteropServices;
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Principal;
-using System.Text;
 using Microsoft.Extensions.Configuration;
-using System.Threading.Tasks;
 
-class Program
+namespace TimerBenchmark;
+
+internal abstract class TimerBenchmark
 {
-    static bool IsAdmin()
-    {
-        return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
-    }
+    private static bool IsAdmin() => new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 
-    static void Main(string[] args)
+    [RequiresDynamicCode("Calls Microsoft.Extensions.Configuration.ConfigurationBinder.Get<T>()")]
+    [RequiresUnreferencedCode("Calls Microsoft.Extensions.Configuration.ConfigurationBinder.Get<T>()")]
+    private static void Main()
     {
         IConfiguration config = new ConfigurationBuilder()
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
@@ -32,7 +31,7 @@ class Program
             return;
         }
 
-        int iterations = (int)(((double)parameters.EndValue - parameters.StartValue) / parameters.IncrementValue);
+        int iterations = (int)((parameters.EndValue - parameters.StartValue) / parameters.IncrementValue);
         double totalMinutes = (double)iterations * parameters.SampleValue / 60000;
 
         string message = $"Approximate worst-case estimated time for completion: {Math.Round(totalMinutes, 2)}mins";
@@ -45,8 +44,8 @@ class Program
         KillProcess("SetTimerResolution");
         string currentDirectory = Environment.CurrentDirectory;
 
-        string[] dependencies = { "SetTimerResolution.exe", "MeasureSleep.exe" };
-        List<string> missingDependencies = new List<string>();
+        string[] dependencies = ["SetTimerResolution.exe", "MeasureSleep.exe"];
+        List<string> missingDependencies = [];
 
         Parallel.ForEach(dependencies, dependency =>
         {
@@ -93,33 +92,36 @@ class Program
                 RedirectStandardOutput = true
             };
 
-            Process process = Process.Start(startInfo);
-            string output = process?.StandardOutput.ReadToEndAsync().Result;
+            Process? process = Process.Start(startInfo);
+            string? output = process?.StandardOutput.ReadToEndAsync().Result;
             process?.WaitForExit();
 
-            string[] outputLines = output.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
-            double avg = 0, stdev = 0;
-
-            foreach (string line in outputLines)
+            if (output != null)
             {
-                if (line.StartsWith("Avg: "))
-                {
-                    if (double.TryParse(line.Substring(5), out double parsedAvg))
-                    {
-                        avg = parsedAvg;
-                    }
-                }
-                else if (line.StartsWith("STDEV: "))
-                {
-                    if (double.TryParse(line.Substring(7), out double parsedStdev))
-                    {
-                        stdev = parsedStdev;
-                    }
-                }
-            }
+                string[] outputLines = output.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
+                double avg = 0, stdev = 0;
 
-            string resultLine = $"{formattedValue}, {Math.Round(avg, 4)}, {stdev}{Environment.NewLine}";
-            File.AppendAllText("results.txt", resultLine);
+                foreach (string line in outputLines)
+                {
+                    if (line.StartsWith("Avg: "))
+                    {
+                        if (double.TryParse(line.Substring(5), out double parsedAvg))
+                        {
+                            avg = parsedAvg;
+                        }
+                    }
+                    else if (line.StartsWith("STDEV: "))
+                    {
+                        if (double.TryParse(line.Substring(7), out double parsedStdev))
+                        {
+                            stdev = parsedStdev;
+                        }
+                    }
+                }
+
+                string resultLine = $"{formattedValue}, {Math.Round(avg, 4)}, {stdev}{Environment.NewLine}";
+                File.AppendAllText("results.txt", resultLine);
+            }
 
             KillProcess("SetTimerResolution");
         }
@@ -129,17 +131,17 @@ class Program
 
     private class BenchmarkingParameters
     {
-        public double StartValue { get; set; }
-        public double IncrementValue { get; set; }
-        public double EndValue { get; set; }
-        public int SampleValue { get; set; }
+        public double StartValue { get; init; }
+        public double IncrementValue { get; init; }
+        public double EndValue { get; init; }
+        public int SampleValue { get; init; }
     }
 
-    static void KillProcess(string processName)
+    private static void KillProcess(string processName)
     {
         Process.GetProcessesByName(processName)
-               .ToList()
-               .ForEach(p => p.Kill());
+            .ToList()
+            .ForEach(p => p.Kill());
     }
 
 }
