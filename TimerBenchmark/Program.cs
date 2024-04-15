@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Text;
 using Microsoft.Extensions.Configuration;
 
 class Program
@@ -17,7 +18,13 @@ class Program
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .Build();
 
-        BenchmarkingParameters parameters = config.GetSection("BenchmarkingParameters").Get<BenchmarkingParameters>();
+        BenchmarkingParameters? parameters = config.GetSection("BenchmarkingParameters").Get<BenchmarkingParameters>();
+
+        if (parameters is null)
+        {
+            Console.WriteLine("Error: Unable to read configuration parameters.");
+            return;
+        }
 
         if (!IsAdmin())
         {
@@ -43,7 +50,7 @@ class Program
             }
         }
 
-        File.WriteAllText("results.txt", "RequestedResolutionMs,DeltaMs,STDEV");
+        StringBuilder results = new StringBuilder("RequestedResolutionMs,DeltaMs,STDEV");
 
         for (double i = parameters.StartValue; i <= parameters.EndValue; i += parameters.IncrementValue)
         {
