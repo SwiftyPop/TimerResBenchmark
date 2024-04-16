@@ -2,6 +2,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Principal;
 using Microsoft.Extensions.Configuration;
+using System.Text;
 
 namespace TimerBenchmark;
 
@@ -31,15 +32,27 @@ internal abstract class TimerBenchmark
             return;
         }
 
-        int iterations = (int)((parameters.EndValue - parameters.StartValue) / parameters.IncrementValue);
-        double totalMinutes = (double)iterations * parameters.SampleValue / 60000;
+        decimal iterations = ((decimal)parameters.EndValue - (decimal)parameters.StartValue) / (decimal)parameters.IncrementValue;
+        decimal totalMinutes = iterations * parameters.SampleValue / 60000m;
 
-        string message = $"Approximate worst-case estimated time for completion: {Math.Round(totalMinutes, 2)}mins";
-        string details = $"Start: {parameters.StartValue}, End: {parameters.EndValue}, Increment: {parameters.IncrementValue}, Samples: {parameters.SampleValue}";
+        StringBuilder messageBuilder = new StringBuilder();
+        messageBuilder.Append("Approximate worst-case estimated time for completion: ");
+        messageBuilder.Append(Math.Round(totalMinutes, 2));
+        messageBuilder.Append("mins");
 
-        Console.WriteLine(message);
+        StringBuilder detailsBuilder = new StringBuilder();
+        detailsBuilder.Append("Start: ");
+        detailsBuilder.Append(parameters.StartValue);
+        detailsBuilder.Append(", End: ");
+        detailsBuilder.Append(parameters.EndValue);
+        detailsBuilder.Append(", Increment: ");
+        detailsBuilder.Append(parameters.IncrementValue);
+        detailsBuilder.Append(", Samples: ");
+        detailsBuilder.Append(parameters.SampleValue);
+
+        Console.WriteLine(messageBuilder.ToString());
         Console.WriteLine("Worst-case is determined by assuming Sleep(1) = ~2ms with 1ms Timer Resolution");
-        Console.WriteLine(details);
+        Console.WriteLine(detailsBuilder.ToString());
 
         KillProcess("SetTimerResolution");
         string currentDirectory = Environment.CurrentDirectory;
