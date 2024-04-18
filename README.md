@@ -1,22 +1,43 @@
 # TimerResBenchmark
-<p align="center"><b> TimerResBenchmark is a executable benchmark written in C# to micro-adjusting timer resolution for higher precision. The tool aims to find the best timer resolution that are closest possible sleep delays to 1ms, which is considered optimal for system performance. It is recommended to use a power plan with idle disabled to achieve consistent 1ms sleep delays and variance in the delta. </b></p> 
+<p align="center"><b> TimerResBenchmark is a executable benchmark to micro-adjusting timer resolution for higher precision. This tool identifies the most accurate timer resolution, striving to achieve the shortest possible delay intervals close to 1 millisecond. Achieving this level of precision is beneficial for the overall performance of the system. </b></p> 
 
-* The tool also include TimerResolution & MeasureSleep from [Amittxv's TimerRes](https://github.com/amitxv/TimerResolution/tree/main), and users can configure settings via `appsettings.json`. For a detailed explanation, visit the [Amittxv's TimerResolution](https://github.com/amitxv/TimerResolution/tree/main).
-
+* The tool also include TimerResolution & MeasureSleep from [Amittxv's TimerRes](https://github.com/amitxv/TimerResolution/tree/main).
 
 ![gifgit](https://github.com/SwiftyPop/TimerResBenchmark/assets/90952326/f03feefd-4bf0-4c05-893e-14570f785d3a)
 
 ## Installation Guide 
 
-### Downloading and Running the Tool
-- Obtain the latest version from the [GitHub Releases](https://github.com/SwiftyPop/TimerResBenchmark/releases).
+### ⚙️ Step 1: Downloading and Running the Tool
+- Before we start, ensure to [disable HPET & use Idle disabled power plan](https://github.com/SwiftyPop/TimerResBenchmark/edit/master/README.md#troubleshooting).
+- Grab the latest version at [GitHub Releases](https://github.com/SwiftyPop/TimerResBenchmark/releases).
 - Extract the `.7z` archive.
-- Run `TimerBenchmark.exe` as an administrator.
-- Adjust settings in `appsettings.json` as needed.
-- It will generate `result.txt` in the same file directory and you can visualize the result at https://chart-studio.plotly.com/create
-  ![amitxv's graph](https://github.com/SwiftyPop/TimerResBenchmark/assets/90952326/dadb2abb-0597-442c-998f-8d7574c0a56b)
+- Run `TimerBenchmark.exe` as an administrator(Adjust settings in `appsettings.json` as needed).
+- It will generate a `result.txt` file in the same directory upon completion.
 
+### 📊 Step 2: Visualize the Results & Find your Optimal Timer Resolution
 
+To visualize the results:
+
+1. Visit [Plotly Chart Studio](https://chart-studio.plotly.com/create/#/).
+2. Click "Import" at the top right and upload the `result.txt` file.
+3. Click "+ Trace" at the top left and adjust the settings as shown in the image below:
+ ![vivaldi_9APYujDnIj](https://github.com/SwiftyPop/TimerResBenchmark/assets/90952326/9f08eb09-7e1a-41f5-819e-10bd41444cd9)
+
+  - The graph should work, and this time we finally can find that sweet timer resolution.
+   ![NWsnWsn3Ax](https://github.com/SwiftyPop/TimerResBenchmark/assets/90952326/24a33f65-2edd-464e-b49d-43ed1497d0b1)
+  - Look for the lowest Sleep(1) Delta on the y-axis. This represents the most precise and constant 1ms Sleep delays. Remember, this value varies greatly between PC specs. Based on my lowest lowest Sleep(1) Delta, the optimal resolution for me is 0.5024ms
+
+### 🚀 Step 3: Set Up Timer Resolution
+1. Go back to the directory where `TimerBenchmark.exe` is located.
+2. Create a shortcut for `SetTimerResolution.exe`.
+3. Place the shortcut in `shell:startup` with the following target:
+```
+C:\PATH\TO\SetTimerResolution.exe --no-console --resolution 5000
+```
+- Replace `5000` with your optimal timer resolution.
+- Restart your PC & verify everything is working correctly with `MeasureSleep.exe`.
+
+  
 ## Troubleshooting:
 ### My Sleep Delays Are Spiking and High >1ms and the Delta Keeps Spiking
 ##### Make Sure to disable HPET first by
@@ -40,6 +61,7 @@
 ~~~
 powercfg -import C:\PATH\TO\MUREN.POW
 ~~~
+3. Change your power plan setting to Muren power plan.
 
 ## Why & What the purpose of this?
 - The purpose of this is to disable HPET and utilize more stable and consistent timers, such as TSC at 3.32MHz, which can improve gaming performance, particularly in terms of frame rate consistency and latency. The benchmark allows you to find the perfect adjustment of timer resolution based on benchmark results, which can further enhance these benefits.
