@@ -1,0 +1,8 @@
+# Mark Rust files as detectable by GitHub Linguist
+*.rs linguist-detectable
+
+# Ignore C# files in language stats
+*.cs linguist-vendored
+
+# Ignore build artifacts
+target/* linguist-generated
