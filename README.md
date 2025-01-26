@@ -76,7 +76,7 @@ C:\PATH\TO\SetTimerResolution.exe --no-console --resolution 5000
 ## Why Use TimerResBenchmark?
 - Disables HPET and uses more stable timers (e.g., TSC at 3.32MHz) for better frame rate consistency and lower latency.
 - Unlike the original PowerShell-based benchmark, this tool is an executable written in Rust for efficiency and ease of use.
-- Created to explore Rust and system-level optimizations. Contributions and feedback are welcome!
+- At first, I rewrite this benchmark tool in C# and now, I rewrite it again Rust as part of learning endeavor :). Contributions and feedback are welcome!
 
 ---
 
