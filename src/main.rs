@@ -9,6 +9,7 @@ use tokio::time::sleep;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
 #[derive(serde::Deserialize)]
 struct BenchmarkingParameters {
     start_value: f64,
@@ -19,10 +20,8 @@ struct BenchmarkingParameters {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    // Current directory
+    // Print the current working directory for debugging
     println!("Current directory: {:?}", env::current_dir()?);
-    
-
 
     // Check if running as administrator
     if !is_admin() {
@@ -47,15 +46,17 @@ async fn main() -> io::Result<()> {
         parameters.start_value, parameters.end_value, parameters.increment_value, parameters.sample_value
     );
 
+    // Get the directory of the current executable
     let exe_dir = env::current_exe()?
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
+    // Construct absolute paths to the dependencies
     let set_timer_resolution_path = exe_dir.join("SetTimerResolution.exe");
     let measure_sleep_path = exe_dir.join("MeasureSleep.exe");
 
-    
+    // Check if dependencies exist
     let dependencies = vec![&set_timer_resolution_path, &measure_sleep_path];
     let missing_dependencies: Vec<_> = dependencies
         .iter()
@@ -65,7 +66,7 @@ async fn main() -> io::Result<()> {
 
     if !missing_dependencies.is_empty() {
         for dep in &missing_dependencies {
-            eprintln!("Error: {} does not exist", dep);
+            eprintln!("Error: {} does not exist in the executable directory", dep);
         }
         return Ok(());
     }
@@ -80,8 +81,18 @@ async fn main() -> io::Result<()> {
         println!("info: benchmarking {}", formatted_value);
 
         let resolution = (formatted_value * 10_000.0) as i32;
+
+        // Debug: Print the command being executed
+        println!(
+            "Executing: {} --resolution {} --no-console",
+            set_timer_resolution_path.display(),
+            resolution
+        );
+
+        // Clone the path before moving it into the closure
+        let set_timer_resolution_path_clone = set_timer_resolution_path.clone();
         task::spawn_blocking(move || {
-            Command::new("SetTimerResolution.exe")
+            Command::new(&set_timer_resolution_path_clone)
                 .arg("--resolution")
                 .arg(resolution.to_string())
                 .arg("--no-console")
@@ -94,10 +105,20 @@ async fn main() -> io::Result<()> {
         // Delay after setting resolution
         sleep(Duration::from_millis(1)).await;
 
-        let output = Command::new("MeasureSleep.exe")
+        // Debug: Print the command being executed
+        println!(
+            "Executing: {} --samples {}",
+            measure_sleep_path.display(),
+            parameters.sample_value
+        );
+
+        let output = Command::new(&measure_sleep_path)
             .arg("--samples")
             .arg(parameters.sample_value.to_string())
             .output()?;
+
+        // Debug: Print the output of the command
+        println!("Output: {}", String::from_utf8_lossy(&output.stdout));
 
         let output_str = String::from_utf8_lossy(&output.stdout);
         let mut avg = 0.0;
