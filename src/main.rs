@@ -1,6 +1,6 @@
 use std::env;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use std::{fs, mem};
@@ -21,6 +21,7 @@ struct BenchmarkingParameters {
 async fn main() -> io::Result<()> {
     // Current directory
     println!("Current directory: {:?}", env::current_dir()?);
+    
 
 
     // Check if running as administrator
@@ -51,13 +52,10 @@ async fn main() -> io::Result<()> {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    // print the paths to check if they are correct
-    println!("SetTimerResolution.exe path: {:?}", exe_dir.join("SetTimerResolution.exe"));
-    println!("MeasureSleep.exe path: {:?}", exe_dir.join("MeasureSleep.exe"));
-
     let set_timer_resolution_path = exe_dir.join("SetTimerResolution.exe");
     let measure_sleep_path = exe_dir.join("MeasureSleep.exe");
 
+    
     let dependencies = vec![&set_timer_resolution_path, &measure_sleep_path];
     let missing_dependencies: Vec<_> = dependencies
         .iter()
