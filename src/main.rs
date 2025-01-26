@@ -12,9 +12,13 @@ use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken}
 
 #[derive(serde::Deserialize)]
 struct BenchmarkingParameters {
+    #[serde(rename = "StartValue")]
     start_value: f64,
+    #[serde(rename = "IncrementValue")]
     increment_value: f64,
+    #[serde(rename = "EndValue")]
     end_value: f64,
+    #[serde(rename = "SampleValue")]
     sample_value: i32,
 }
 
@@ -30,8 +34,21 @@ async fn main() -> io::Result<()> {
     }
 
     // Load configuration from JSON file
-    let config = fs::read_to_string("appsettings.json")?;
-    let parameters: BenchmarkingParameters = serde_json::from_str(&config)?;
+    let config = match fs::read_to_string("appsettings.json") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Failed to read appsettings.json: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let parameters: BenchmarkingParameters = match serde_json::from_str(&config) {
+        Ok(params) => params,
+        Err(e) => {
+            eprintln!("Failed to parse JSON: {}", e);
+            eprintln!("JSON content: {}", config);
+            std::process::exit(1);
+        }
+    };
 
     // Calculate estimated time
     let iterations = (parameters.end_value - parameters.start_value) / parameters.increment_value;
