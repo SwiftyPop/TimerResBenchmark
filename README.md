@@ -1,6 +1,6 @@
 # TimerResBenchmark
 
-<p align="center"><b>TimerResBenchmark is a tool rewritten in Rust for fine-tuning system timer resolution to achieve precise sleep intervals close to 1 millisecond. This optimization can improve system performance, especially in scenarios like gaming, where consistent frame rates and low latency are critical.</b></p>
+<p align="center"><b>A Rust-based tool for benchmarking system timer resolution to achieve precise sleep intervals, optimizing performance and consistency for high-performance tasks like gaming, especially in low-latency scenarios. It automatically detects HPET status and identifies the optimal timer resolution for your system.</b></p>
 
 ![image](https://github.com/user-attachments/assets/72b39d18-94a8-4312-b7ac-d86f773520ce)
 
