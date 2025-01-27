@@ -111,13 +111,12 @@ async fn main() -> io::Result<()> {
         }
     };
 
-    let exe_dir = match env::current_exe() {
-        Ok(path) => path.parent().map_or_else(|| PathBuf::from("."), |p| p.to_path_buf()),
-        Err(e) => {
-            eprintln!("❌ Error: Failed to get current executable path: {}", e);
-            return Err(Error::new(ErrorKind::Other, "Failed to get current executable path"));
-        }
-    };
+    let exe_dir = env::current_exe()?.parent()
+        .ok_or_else(|| {
+            eprintln!("❌ Error: Failed to get current executable path");
+            Error::new(ErrorKind::Other, "Failed to get current executable path")
+        })?
+        .to_path_buf();
 
     let set_timer_resolution_path = exe_dir.join("SetTimerResolution.exe");
     let measure_sleep_path = exe_dir.join("MeasureSleep.exe");
@@ -125,21 +124,40 @@ async fn main() -> io::Result<()> {
     // Dependency check
     println!("\n🔍 Checking Dependencies");
     println!("━━━━━━━━━━━━━━━━━━━━━");
-    for dep in &[&set_timer_resolution_path, &measure_sleep_path] {
-        if !dep.exists() {
-            eprintln!("❌ Error: Missing dependency: {}", dep.display());
-            return Err(Error::new(ErrorKind::NotFound, format!("Dependency not found: {}", dep.display())));
-        }
-        println!("✓ Found: {}", dep.file_name().unwrap_or_default().to_string_lossy());
+
+    let dependencies = [
+        ("SetTimerResolution.exe", &set_timer_resolution_path),
+        ("MeasureSleep.exe", &measure_sleep_path),
+    ];
+
+    let missing_dependencies: Vec<_> = dependencies.iter()
+        .filter_map(|(name, path)| {
+            if path.exists() {
+                println!("✓ Found: {}", path.file_name().unwrap_or_default().to_string_lossy());
+                None
+            } else {
+                Some(*name)
+            }
+        })
+        .collect();
+
+    if !missing_dependencies.is_empty() {
+        eprintln!("❌ Error: Missing dependencies: {}", missing_dependencies.join(", "));
+        return Err(Error::new(ErrorKind::NotFound, "Missing dependencies"));
     }
     println!();
 
-    println!("\n⏳ Press Enter to start the benchmark...");
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
+        prompt_user("⏳ Press Enter to start the benchmark...")?;
+    
+    fn prompt_user(message: &str) -> io::Result<()> {
+        println!("{}", message);
+        io::stdin().read_line(&mut String::new())?;
+        Ok(())
+    }
 
-    let mut results_file = BufWriter::new(fs::File::create("results.txt")?);
-    writeln!(results_file, "RequestedResolutionMs,DeltaMs,StandardDeviation")?;
+    let results_file = fs::File::create("results.txt")?;
+    let mut results_writer = BufWriter::new(results_file);
+    writeln!(results_writer, "RequestedResolutionMs,DeltaMs,StandardDeviation")?;
     println!("📝 Results will be saved to: results.txt");
 
     let mut current = parameters.start_value;
@@ -147,7 +165,7 @@ async fn main() -> io::Result<()> {
     let progress_bar = indicatif::ProgressBar::new(total_iterations);
     progress_bar.set_style(
         indicatif::ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+            .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
             .unwrap()
             .progress_chars("#>-")
     );
@@ -155,52 +173,48 @@ async fn main() -> io::Result<()> {
 
     while current <= parameters.end_value {
         let resolution = ((current * 10_000.0).round() / 10_000.0 * 10_000.0) as i32;
-    
-        let timer_path = set_timer_resolution_path.clone();
-        let sleep_path = measure_sleep_path.clone();
-    
-        let set_timer_result = task::spawn_blocking(move || {
-            Command::new(&timer_path)
-                .args(&["--resolution", &resolution.to_string(), "--no-console"])
-                .stdout(Stdio::null())
-                .spawn()
+
+        let set_timer_result = task::spawn_blocking({
+            let timer_path = set_timer_resolution_path.clone();
+            move || {
+                Command::new(&timer_path)
+                    .args(&["--resolution", &resolution.to_string(), "--no-console"])
+                    .stdout(Stdio::null())
+                    .spawn()
+            }
         }).await?;
 
-        match set_timer_result {
-            Ok(_) => {},
-            Err(e) => eprintln!("Failed to set timer resolution: {}", e),
+        if let Err(e) = set_timer_result {
+            eprintln!("Failed to set timer resolution: {}", e);
         }
-    
+
         sleep(Duration::from_millis(1)).await;
-    
-        let output = match Command::new(&sleep_path)
+
+        let output = Command::new(&measure_sleep_path)
             .arg("--samples")
             .arg(parameters.sample_value.to_string())
-            .output() {
-            Ok(out) => out,
-            Err(e) => {
+            .output()
+            .map_err(|e| {
                 eprintln!("Failed to execute measurement: {}", e);
-                return Err(e);
-            }
-        };
-    
-        let (avg, stdev) = match parse_measurement_output(&output.stdout) {
-            Ok(result) => result,
-            Err(e) => {
-                eprintln!("Failed to parse measurement output: {}", e);
-                return Err(e);
-            }
-        };
-    
+                e
+            })?;
+
+        let (avg, stdev) = parse_measurement_output(&output.stdout).map_err(|e| {
+            eprintln!("Failed to parse measurement output: {}", e);
+            e
+        })?;
+
         if avg != 0.0 && stdev != 0.0 {
-            writeln!(results_file, "{:.4},{:.4},{:.4}", current, avg, stdev)?;
+            writeln!(results_writer, "{:.4},{:.4},{:.4}", current, avg, stdev)?;
         } else {
             eprintln!("❌ Measurement output is invalid for resolution: {}", resolution);
         }
-    
-        results_file.flush()?;
-        kill_process("SetTimerResolution.exe");
-    
+
+        results_writer.flush()?;
+        if let Err(e) = kill_process("SetTimerResolution.exe") {
+            eprintln!("Failed to kill process: {}", e);
+        }
+
         current += parameters.increment_value;
         progress_bar.set_message(format!("Current resolution: {:.4} ms", current));
         progress_bar.inc(1);
@@ -221,22 +235,22 @@ async fn main() -> io::Result<()> {
         .has_headers(true)
         .from_reader(results_content.as_bytes());
 
-    let mut optimal_resolution = None;
-    let mut min_delta_ms = f64::MAX;
-    let mut min_std_dev = f64::MAX;
-
-    for result in rdr.records() {
-        let record = result?;
-        let requested_resolution: f64 = record[0].parse().map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
-        let delta_ms: f64 = record[1].parse().map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
-        let std_dev: f64 = record[2].parse().map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
-
-        if delta_ms < min_delta_ms || (delta_ms == min_delta_ms && std_dev < min_std_dev) {
-            min_delta_ms = delta_ms;
-            min_std_dev = std_dev;
-            optimal_resolution = Some(requested_resolution);
-        }
-    }
+    let (optimal_resolution, _, _) = rdr.records()
+        .filter_map(|result| {
+            result.ok().and_then(|record| {
+                let requested_resolution: f64 = record[0].parse().ok()?;
+                let delta_ms: f64 = record[1].parse().ok()?;
+                let std_dev: f64 = record[2].parse().ok()?;
+                Some((requested_resolution, delta_ms, std_dev))
+            })
+        })
+        .fold((None, f64::MAX, f64::MAX), |(opt_res, min_delta, min_std), (res, delta, std)| {
+            if delta < min_delta || (delta == min_delta && std < min_std) {
+                (Some(res), delta, std)
+            } else {
+                (opt_res, min_delta, min_std)
+            }
+        });
 
     if let Some(resolution) = optimal_resolution {
         println!("✅ Optimal Timer Resolution: {:.4} ms", resolution);
@@ -248,12 +262,17 @@ async fn main() -> io::Result<()> {
     println!("Benchmarking completed successfully");
 
     // Wait for user input before exiting
-    println!("Press Enter to exit...");
-    let mut exit_input = String::new();
-    io::stdin().read_line(&mut exit_input)?;
+    prompt_exit()?;
 
     Ok(())
-    }
+}
+
+fn prompt_exit() -> io::Result<()> {
+    println!("Press Enter to exit...");
+    io::stdin().read_line(&mut String::new())?;
+    Ok(())
+}
+    
 
 fn check_hpet_status() -> io::Result<()> {
     let output = Command::new("bcdedit")
@@ -266,20 +285,18 @@ fn check_hpet_status() -> io::Result<()> {
     }
 
     let output_str = String::from_utf8_lossy(&output.stdout);
-    let mut useplatformtick = None;
-    let mut disabledynamictick = None;
-
-    for line in output_str.lines() {
-        if let Some(value) = line.split_whitespace().nth(1) {
-            match line.split_whitespace().next() {
-                Some("useplatformtick") => useplatformtick = Some(value.to_lowercase()),
-                Some("disabledynamictick") => disabledynamictick = Some(value.to_lowercase()),
-                _ => {}
+    let hpet_status = output_str.lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            match (parts.next(), parts.next()) {
+                (Some("useplatformtick"), Some(value)) => Some(("useplatformtick", value.to_lowercase())),
+                (Some("disabledynamictick"), Some(value)) => Some(("disabledynamictick", value.to_lowercase())),
+                _ => None,
             }
-        }
-    }
+        })
+        .collect::<std::collections::HashMap<_, _>>();
 
-    let hpet_status = match (useplatformtick.as_deref(), disabledynamictick.as_deref()) {
+    let hpet_status = match (hpet_status.get("useplatformtick").map(String::as_str), hpet_status.get("disabledynamictick").map(String::as_str)) {
         (Some("no"), Some("yes")) => "disabled",
         _ => "enabled",
     };
@@ -298,25 +315,20 @@ fn parse_measurement_output(output: &[u8]) -> io::Result<(f64, f64)> {
     let output_str = std::str::from_utf8(output)
         .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
 
-    let lines: Vec<&str> = output_str.lines().collect();
-    if lines.len() >= 2 {
-        println!("Measurement output: {}", output_str);
-    
-
-    let mut avg = 0.0;
-    let mut stdev = 0.0;
+    let mut avg = None;
+    let mut stdev = None;
 
     for line in output_str.lines() {
-        if line.starts_with("Avg: ") {
-            avg = line[5..].parse().unwrap_or(0.0);
-        } else if line.starts_with("STDEV: ") {
-            stdev = line[7..].parse().unwrap_or(0.0);
+        if let Some(value) = line.strip_prefix("Avg: ") {
+            avg = value.parse().ok();
+        } else if let Some(value) = line.strip_prefix("STDEV: ") {
+            stdev = value.parse().ok();
         }
     }
 
-    Ok((avg, stdev))
-    } else {
-        Err(Error::new(ErrorKind::InvalidData, "Invalid measurement output"))
+    match (avg, stdev) {
+        (Some(avg), Some(stdev)) => Ok((avg, stdev)),
+        _ => Err(Error::new(ErrorKind::InvalidData, "Invalid measurement output")),
     }
 }
 
@@ -327,33 +339,35 @@ fn is_admin() -> bool {
     INIT.call_once(|| {
         unsafe {
             let mut token: HANDLE = ptr::null_mut();
-            let is_elevated = if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) != 0 {
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) != 0 {
                 let mut elevation: TOKEN_ELEVATION = mem::zeroed();
                 let mut size = size_of::<TOKEN_ELEVATION>() as u32;
 
-                let result = GetTokenInformation(
+                if GetTokenInformation(
                     token,
                     TokenElevation,
                     &mut elevation as *mut _ as *mut std::ffi::c_void,
                     size,
                     &mut size,
-                );
-
+                ) != 0 && elevation.TokenIsElevated != 0
+                {
+                    IS_ADMIN.store(true, Ordering::Relaxed);
+                }
                 windows_sys::Win32::Foundation::CloseHandle(token);
-                result != 0 && elevation.TokenIsElevated != 0
-            } else {
-                false
-            };
-
-            IS_ADMIN.store(is_elevated, Ordering::Relaxed);
+            }
         }
     });
 
     IS_ADMIN.load(Ordering::Relaxed)
 }
 
-fn kill_process(process_name: &str) {
-    let _ = Command::new("taskkill")
+fn kill_process(process_name: &str) -> io::Result<()> {
+    Command::new("taskkill")
         .args(&["/IM", process_name, "/F"])
-        .output();
+        .output()
+        .map(|_| ())
+        .map_err(|e| {
+            eprintln!("Failed to kill process {}: {}", process_name, e);
+            e
+        })
 }
