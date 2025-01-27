@@ -122,10 +122,11 @@ async fn main() -> io::Result<()> {
     let progress_bar = indicatif::ProgressBar::new(total_iterations);
     progress_bar.set_style(
         indicatif::ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
             .unwrap()
             .progress_chars("#>-")
     );
+    progress_bar.enable_steady_tick(Duration::from_millis(100));
 
     while current <= parameters.end_value {
         let resolution = ((current * 10_000.0).round() / 10_000.0 * 10_000.0) as i32;
@@ -134,7 +135,6 @@ async fn main() -> io::Result<()> {
         let sleep_path = measure_sleep_path.clone();
     
         let set_timer_result = task::spawn_blocking(move || {
-            println!("Setting timer resolution: {}", resolution);
             Command::new(&timer_path)
                 .args(&["--resolution", &resolution.to_string(), "--no-console"])
                 .stdout(Stdio::null())
@@ -142,7 +142,7 @@ async fn main() -> io::Result<()> {
         }).await?;
 
         match set_timer_result {
-            Ok(_) => println!("Timer resolution set successfully"),
+            Ok(_) => {},
             Err(e) => eprintln!("Failed to set timer resolution: {}", e),
         }
     
@@ -177,6 +177,7 @@ async fn main() -> io::Result<()> {
         kill_process("SetTimerResolution.exe");
     
         current += parameters.increment_value;
+        progress_bar.set_message(format!("Current resolution: {:.4} ms", current));
         progress_bar.inc(1);
     }
 
@@ -266,7 +267,10 @@ fn parse_measurement_output(output: &[u8]) -> io::Result<(f64, f64)> {
     let output_str = std::str::from_utf8(output)
         .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
 
-    println!("Measurement output: {}", output_str);
+    let lines: Vec<&str> = output_str.lines().collect();
+    if lines.len() >= 2 {
+        println!("Measurement output: {}", output_str);
+    
 
     let mut avg = 0.0;
     let mut stdev = 0.0;
@@ -280,6 +284,9 @@ fn parse_measurement_output(output: &[u8]) -> io::Result<(f64, f64)> {
     }
 
     Ok((avg, stdev))
+    } else {
+        Err(Error::new(ErrorKind::InvalidData, "Invalid measurement output"))
+    }
 }
 
 static IS_ADMIN: AtomicBool = AtomicBool::new(false);
