@@ -4,19 +4,30 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-windows-sys = { version = "0.59.0", features = ["Win32_Foundation","Win32_Security","Win32_System_Threading"]}
+windows-sys = { version = "0.59.0", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_System_LibraryLoader"] }
 
 serde = { version = "1.0.217",features = ["derive"] }
 serde_json = "1.0.135"
 
 tokio = {version = "1.43.0", features = ["full"]}
 
+[dependencies.windows]
+version = "0.59.0"
+features = [
+    "Wdk",
+    "Wdk_System",
+    "Wdk_System_SystemInformation",
+    "Win32_System",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+    "Win32_System_SystemInformation",
+    "Win32_Foundation" ]
 
 
 
 [dev-dependencies]
 # For testing
-tempfile = "3.3"
+
 
 [profile.release]
 # Optimize for performance

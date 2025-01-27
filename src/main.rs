@@ -1,16 +1,19 @@
-use std::env;
-use std::io::{self, Write};
+use io::ErrorKind;
+use serde::Deserialize;
+use std::io::{self, BufWriter, Error, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
+use std::{env, ptr};
 use std::{fs, mem};
 use tokio::task;
 use tokio::time::sleep;
+//use windows::core::imp::GetProcAddress;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, Deserialize)]
 struct BenchmarkingParameters {
     #[serde(rename = "StartValue")]
     start_value: f64,
@@ -24,150 +27,196 @@ struct BenchmarkingParameters {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    // Print the current working directory for debugging
+    // Enhanced logging and error handling
+    println!("Starting benchmarking script...");
     println!("Current directory: {:?}", env::current_dir()?);
 
-    // Check if running as administrator
     if !is_admin() {
-        eprintln!("error: administrator privileges required");
-        std::process::exit(1);
+        eprintln!("Error: Administrator privileges required");
+        return Err(Error::new(ErrorKind::PermissionDenied, "Administrator privileges required"));
     }
 
-    // Load configuration from JSON file
-    let config = match fs::read_to_string("appsettings.json") {
+    // New system checks
+    println!("\nChecking system configuration...");
+    if let Err(e) = check_hpet_status() {
+        eprintln!("Warning: Could not determine HPET status: {}", e);
+    }
+
+   
+
+    // Detailed configuration loading
+    let config_path = "appsettings.json";
+    println!("Attempting to read configuration from: {}", config_path);
+
+    let config = match fs::read_to_string(config_path) {
         Ok(content) => content,
         Err(e) => {
-            eprintln!("Failed to read appsettings.json: {}", e);
-            std::process::exit(1);
-        }
-    };
-    let parameters: BenchmarkingParameters = match serde_json::from_str(&config) {
-        Ok(params) => params,
-        Err(e) => {
-            eprintln!("Failed to parse JSON: {}", e);
-            eprintln!("JSON content: {}", config);
-            std::process::exit(1);
+            eprintln!("Failed to read configuration file: {}", e);
+            return Err(e);
         }
     };
 
-    // Calculate estimated time
+    println!("Configuration content: {}", config);
+
+    let parameters: BenchmarkingParameters = match serde_json::from_str(&config) {
+        Ok(params) => {
+            println!("Configuration parsed successfully: {:?}", params);
+            params
+        },
+        Err(e) => {
+            eprintln!("Failed to parse configuration JSON: {}", e);
+            return Err(Error::new(ErrorKind::InvalidData, e));
+        }
+    };
+
     let iterations = (parameters.end_value - parameters.start_value) / parameters.increment_value;
     let total_minutes = iterations * parameters.sample_value as f64 * 2.0 / 60_000.0;
     println!(
-        "Approximate worst-case estimated time for completion: {:.2} mins",
+        "Estimated completion time: {:.2} mins (worst-case with 1ms Timer Resolution)",
         total_minutes
     );
-    println!("Worst-case is determined by assuming Sleep(1) = ~2ms with 1ms Timer Resolution");
-    println!(
-        "Start: {}, End: {}, Increment: {}, Samples: {}",
-        parameters.start_value, parameters.end_value, parameters.increment_value, parameters.sample_value
-    );
 
-    // Get the directory of the current executable
     let exe_dir = env::current_exe()?
         .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
+        .map_or_else(|| PathBuf::from("."), |p| p.to_path_buf());
 
-    // Construct absolute paths to the dependencies
     let set_timer_resolution_path = exe_dir.join("SetTimerResolution.exe");
     let measure_sleep_path = exe_dir.join("MeasureSleep.exe");
 
-    // Check if dependencies exist
-    let dependencies = vec![&set_timer_resolution_path, &measure_sleep_path];
-    let missing_dependencies: Vec<_> = dependencies
-        .iter()
-        .filter(|dep| !dep.exists())
-        .map(|dep| dep.to_str().unwrap_or("").to_string())
-        .collect();
+    println!("Timer resolution executable: {}", set_timer_resolution_path.display());
+    println!("Measure sleep executable: {}", measure_sleep_path.display());
 
-    if !missing_dependencies.is_empty() {
-        for dep in &missing_dependencies {
-            eprintln!("Error: {} does not exist in the executable directory", dep);
+    for dep in &[&set_timer_resolution_path, &measure_sleep_path] {
+        if !dep.exists() {
+            eprintln!("Dependency not found: {}", dep.display());
+            return Err(Error::new(ErrorKind::NotFound,
+                                      format!("Dependency not found: {}", dep.display())));
         }
-        return Ok(());
     }
 
-    // Write header to results file
-    fs::write("results.txt", "RequestedResolutionMs,DeltaMs,STDEV\n")?;
+    let mut results_file = BufWriter::new(fs::File::create("results.txt")?);
+    writeln!(results_file, "RequestedResolutionMs,DeltaMs,STDEV")?;
 
-    // Benchmark loop
-    let mut i = parameters.start_value;
-    while i <= parameters.end_value {
-        let formatted_value = (i * 10_000.0).round() / 10_000.0;
-        println!("info: benchmarking {}", formatted_value);
+    let mut current = parameters.start_value;
+    while current <= parameters.end_value {
+        let resolution = ((current * 10_000.0).round() / 10_000.0 * 10_000.0) as i32;
 
-        let resolution = (formatted_value * 10_000.0) as i32;
+        println!("Processing resolution: {}", resolution);
 
-        // Debug: Print the command being executed
-        println!(
-            "Executing: {} --resolution {} --no-console",
-            set_timer_resolution_path.display(),
-            resolution
-        );
+        let timer_path = set_timer_resolution_path.clone();
+        let sleep_path = measure_sleep_path.clone();
 
-        // Clone the path before moving it into the closure
-        let set_timer_resolution_path_clone = set_timer_resolution_path.clone();
         task::spawn_blocking(move || {
-            Command::new(&set_timer_resolution_path_clone)
-                .arg("--resolution")
-                .arg(resolution.to_string())
-                .arg("--no-console")
+            println!("Setting timer resolution: {}", resolution);
+            match Command::new(&timer_path)
+                .args(&["--resolution", &resolution.to_string(), "--no-console"])
                 .stdout(Stdio::null())
-                .spawn()
-                .expect("Failed to start SetTimerResolution.exe");
-        })
-            .await?;
+                .spawn() {
+                Ok(_) => println!("Timer resolution set successfully"),
+                Err(e) => eprintln!("Failed to set timer resolution: {}", e)
+            }
+        }).await?;
 
-        // Delay after setting resolution
         sleep(Duration::from_millis(1)).await;
 
-        // Debug: Print the command being executed
-        println!(
-            "Executing: {} --samples {}",
-            measure_sleep_path.display(),
-            parameters.sample_value
-        );
-
-        let output = Command::new(&measure_sleep_path)
+        let output = match Command::new(&sleep_path)
             .arg("--samples")
             .arg(parameters.sample_value.to_string())
-            .output()?;
-
-        // Debug: Print the output of the command
-        println!("Output: {}", String::from_utf8_lossy(&output.stdout));
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        let mut avg = 0.0;
-        let mut stdev = 0.0;
-
-        for line in output_str.lines() {
-            if line.starts_with("Avg: ") {
-                avg = line[5..].parse().unwrap_or(0.0);
-            } else if line.starts_with("STDEV: ") {
-                stdev = line[7..].parse().unwrap_or(0.0);
+            .output() {
+            Ok(out) => out,
+            Err(e) => {
+                eprintln!("Failed to execute measurement: {}", e);
+                return Err(e);
             }
-        }
+        };
 
-        let result_line = format!("{:.4}, {:.4}, {:.4}\n", formatted_value, avg, stdev);
-        fs::OpenOptions::new()
-            .append(true)
-            .open("results.txt")?
-            .write_all(result_line.as_bytes())?;
+        let (avg, stdev) = match parse_measurement_output(&output.stdout) {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("Failed to parse measurement output: {}", e);
+                return Err(e);
+            }
+        };
+
+        writeln!(results_file, "{:.4},{:.4},{:.4}", current, avg, stdev)?;
 
         kill_process("SetTimerResolution.exe");
 
-        // Increment by the specified value
-        i += parameters.increment_value;
+        current += parameters.increment_value;
     }
 
-    println!("info: results saved in results.txt");
+    println!("Benchmarking completed successfully");
     Ok(())
 }
 
+fn check_hpet_status() -> io::Result<()> {
+    let output = Command::new("bcdedit")
+        .args(&["/enum", "{current}"])
+        .output()?;
+
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr);
+        return Err(Error::new(ErrorKind::Other, format!("bcdedit failed: {}", err_msg)));
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let mut useplatformtick = "no".to_string();
+    let mut disabledynamictick = "no".to_string();
+
+    for line in output_str.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let key = parts[0].to_lowercase();
+            let value = parts[1].to_lowercase();
+
+            match key.as_str() {
+                "useplatformtick" => {
+                    useplatformtick = value;
+                }
+                "disabledynamictick" => {
+                    disabledynamictick = value;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let hpet_status = if useplatformtick == "no" && disabledynamictick == "yes" {
+        "disabled"
+    } else {
+        "enabled"
+    };
+
+    println!("HPET status: {}", hpet_status);
+    Ok(())
+}
+
+
+// Rest of the code remains the same as in previous version
+fn parse_measurement_output(output: &[u8]) -> io::Result<(f64, f64)> {
+    let output_str = std::str::from_utf8(output)
+        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+
+    println!("Measurement output: {}", output_str);
+
+    let mut avg = 0.0;
+    let mut stdev = 0.0;
+
+    for line in output_str.lines() {
+        if line.starts_with("Avg: ") {
+            avg = line[5..].parse().unwrap_or(0.0);
+        } else if line.starts_with("STDEV: ") {
+            stdev = line[7..].parse().unwrap_or(0.0);
+        }
+    }
+
+    Ok((avg, stdev))
+}
+
+// Existing admin and process kill functions remain the same
 fn is_admin() -> bool {
     unsafe {
-        let mut token: HANDLE = std::ptr::null_mut();
+        let mut token: HANDLE = ptr::null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
             return false;
         }
@@ -190,13 +239,7 @@ fn is_admin() -> bool {
 }
 
 fn kill_process(process_name: &str) {
-    let output = Command::new("taskkill")
-        .arg("/IM")
-        .arg(process_name)
-        .arg("/F")
+    let _ = Command::new("taskkill")
+        .args(&["/IM", process_name, "/F"])
         .output();
-
-    if let Err(e) = output {
-        eprintln!("Failed to kill process {}: {}", process_name, e);
-    }
 }
