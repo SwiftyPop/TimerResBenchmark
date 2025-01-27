@@ -62,22 +62,47 @@ async fn main() -> io::Result<()> {
         .and_then(|content| serde_json::from_str::<BenchmarkingParameters>(&content)
             .map_err(|e| Error::new(ErrorKind::InvalidData, e)))
     {
-        Ok(params) => {
-            let iterations = ((params.end_value - params.start_value) / params.increment_value).ceil();
-            
+        Ok(mut params) => {
+            let mut input = String::new();
+
+            let mut prompt = |desc: &str, current: &str| -> io::Result<String> {
+                println!("▸ {}: {} (current)", desc, current);
+                println!("Enter new {} (or press Enter to keep current): ", desc);
+                input.clear();
+                io::stdin().read_line(&mut input)?;
+                Ok(input.trim().to_string())
+            };
+
             println!("⚙️ Benchmark Parameters");
             println!("━━━━━━━━━━━━━━━━━━━");
-            println!("▸ Start Value:  {:.4} ms", params.start_value);
-            println!("▸ Increment:    {:.4} ms", params.increment_value);
-            println!("▸ End Value:    {:.4} ms", params.end_value);
-            println!("▸ Samples:      {}", params.sample_value);
+
+            if let Ok(new_value) = prompt("Start Value", &format!("{:.4} ms", params.start_value)) {
+                if !new_value.is_empty() {
+                    params.start_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
+                }
+            }
+
+            if let Ok(new_value) = prompt("Increment Value", &format!("{:.4} ms", params.increment_value)) {
+                if !new_value.is_empty() {
+                    params.increment_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
+                }
+            }
+
+            if let Ok(new_value) = prompt("End Value", &format!("{:.4} ms", params.end_value)) {
+                if !new_value.is_empty() {
+                    params.end_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
+                }
+            }
+
+            if let Ok(new_value) = prompt("Sample Value", &params.sample_value.to_string()) {
+                if !new_value.is_empty() {
+                    params.sample_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
+                }
+            }
+
+            let iterations = ((params.end_value - params.start_value) / params.increment_value).ceil();
             println!("▸ Iterations:   {}\n", iterations as i32);
-            
-            println!("Presets:");
-            println!("(slow/accurate) Start: 0.5, End: 0.51, Increment: 0.0001");
-            println!("(recommended) Increment: 0.0006");
-            println!("(fast) Increment: 0.002");
-            
+
             params
         },
         Err(e) => {
@@ -221,7 +246,13 @@ async fn main() -> io::Result<()> {
     }
 
     println!("Benchmarking completed successfully");
-        Ok(())
+
+    // Wait for user input before exiting
+    println!("Press Enter to exit...");
+    let mut exit_input = String::new();
+    io::stdin().read_line(&mut exit_input)?;
+
+    Ok(())
     }
 
 fn check_hpet_status() -> io::Result<()> {
