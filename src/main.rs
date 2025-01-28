@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use io::ErrorKind;
 use serde::Deserialize;
 use std::io::{self, BufWriter, Error, Write};
@@ -17,6 +18,7 @@ use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken}
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 use indicatif;
+use std::sync::Mutex;
 
 #[derive(Debug, Deserialize)]
 struct BenchmarkingParameters {
@@ -98,14 +100,14 @@ async fn main() -> io::Result<()> {
             .map_err(|e| Error::new(ErrorKind::InvalidData, e)))
     {
         Ok(mut params) => {
-            let mut input = String::new();
+            let mut input = Cow::Borrowed("");
 
-            let mut prompt = |desc: &str, current: &str| -> io::Result<String> {
+            let mut prompt = |desc: &str, current: &str| -> io::Result<Cow<'static, str>> {
                 println!("▸ {}: {} (current)", desc, current);
                 println!("Enter new {} (or press Enter to keep current): ", desc);
-                input.clear();
-                io::stdin().read_line(&mut input)?;
-                Ok(input.trim().to_string())
+                input.to_mut().clear();
+                io::stdin().read_line(input.to_mut())?;
+                Ok(Cow::Owned(input.trim().to_string()))
             };
 
             println!("⚙️ Benchmark Parameters");
@@ -182,7 +184,7 @@ async fn main() -> io::Result<()> {
     }
     println!();
 
-        prompt_user("⏳ Press Enter to start the benchmark...")?;
+    prompt_user("⏳ Press Enter to start the benchmark...")?;
     
     fn prompt_user(message: &str) -> io::Result<()> {
         println!("{}", message);
@@ -191,7 +193,7 @@ async fn main() -> io::Result<()> {
     }
 
     let results_file = fs::File::create("results.txt")?;
-    let mut results_writer = BufWriter::new(results_file);
+    let mut results_writer = BufWriter::with_capacity(8 * 1024, results_file);
     writeln!(results_writer, "RequestedResolutionMs,DeltaMs,StandardDeviation")?;
     println!("📝 Results will be saved to: results.txt");
 
@@ -209,13 +211,13 @@ async fn main() -> io::Result<()> {
     while current <= parameters.end_value {
         let resolution = ((current * 10_000.0).round() / 10_000.0 * 10_000.0) as i32;
 
+        let set_timer_resolution_path = set_timer_resolution_path.clone();
         let set_timer_result = task::spawn_blocking({
-            let timer_path = set_timer_resolution_path.clone();
             move || {
-                Command::new(&timer_path)
-                    .args(&["--resolution", &resolution.to_string(), "--no-console"])
-                    .stdout(Stdio::null())
-                    .spawn()
+            Command::new(&set_timer_resolution_path)
+                .args(&["--resolution", &resolution.to_string(), "--no-console"])
+                .stdout(Stdio::null())
+                .spawn()
             }
         }).await?;
 
@@ -309,7 +311,18 @@ fn prompt_exit() -> io::Result<()> {
 }
     
 
+lazy_static::lazy_static! {
+    static ref HPET_STATUS: Mutex<Option<String>> = Mutex::new(None);
+}
+
 fn check_hpet_status() -> io::Result<()> {
+    let mut status = HPET_STATUS.lock().unwrap();
+
+    if let Some(ref cached_status) = *status {
+        println!("HPET status (cached): {}", cached_status);
+        return Ok(());
+    }
+
     let output = Command::new("bcdedit")
         .args(&["/enum", "{current}"])
         .output()?;
@@ -342,6 +355,8 @@ fn check_hpet_status() -> io::Result<()> {
         println!("⚠️ HPET is enabled. For optimal results, it is recommended to disable HPET.");
         println!("Please refer to the troubleshooting guide: https://github.com/SwiftyPop/TimerResBenchmark?tab=readme-ov-file#troubleshooting");
     }
+
+    *status = Some(hpet_status.to_string());
 
     Ok(())
 }
@@ -397,12 +412,29 @@ fn is_admin() -> bool {
 }
 
 fn kill_process(process_name: &str) -> io::Result<()> {
-    Command::new("taskkill")
-        .args(&["/IM", process_name, "/F"])
-        .output()
-        .map(|_| ())
-        .map_err(|e| {
-            eprintln!("Failed to kill process {}: {}", process_name, e);
-            e
-        })
+    let mut system = sysinfo::System::new_all();
+    system.refresh_all();
+
+    let mut found = false;
+
+    for (pid, process) in system.processes() {
+        if process.name().eq_ignore_ascii_case(process_name) {
+            if process.kill() {
+                println!("Killed process {} with PID {}", process_name, pid);
+                found = true;
+            } else {
+                eprintln!("Failed to kill process {} with PID {}", process_name, pid);
+                return Err(Error::new(ErrorKind::Other, format!("Failed to kill process {}", process_name)));
+            }
+        }
+    }
+
+    if !found {
+        eprintln!("Process {} not found", process_name);
+        return Err(Error::new(ErrorKind::NotFound, format!("Process {} not found", process_name)));
+    }
+
+    Ok(())
 }
+
+
