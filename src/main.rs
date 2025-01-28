@@ -9,6 +9,8 @@ use std::{fs, mem::size_of};
 use tokio::task;
 use tokio::time::sleep;
 use std::mem;
+use os_info;
+use raw_cpuid;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -49,7 +51,40 @@ async fn main() -> io::Result<()> {
     println!("📊 System Information");
     println!("━━━━━━━━━━━━━━━━━━━");
     println!("📂 Working Directory: {}", env::current_dir()?.display());
-    println!("🛡️ Admin Privileges: ✓ Confirmed\n");
+    println!("🛡️ Admin Privileges: ✓ Confirmed");
+
+    // Display current executable path
+    let exe_path = env::current_exe()?;
+    println!("🔍 Executable Path: {}", exe_path.display());
+
+    // Display OS information
+    let os_info = os_info::get();
+
+    // Check if the OS is Windows and display specific version information
+    if let os_info::Type::Windows = os_info.os_type() {
+        if let Some(build_number) = os_info.version().to_string().split('.').nth(2).and_then(|s| s.parse::<u32>().ok()) {
+            let version = if build_number >= 22000 {
+                "Windows 11"
+            } else {
+                "Windows 10"
+            };
+            println!("🖥️ Windows Version: {} (Build {})", version, build_number);
+        } else {
+            println!("🖥️ Windows Version: Unknown Build");
+        }
+    }
+
+    // Display CPU information
+    let cpuid = raw_cpuid::CpuId::new();
+
+    // Get the CPU brand string
+    if let Some(brand) = cpuid.get_processor_brand_string() {
+        println!("💻 CPU: {}", brand.as_str().trim());
+    } else {
+        println!("💻 CPU: Unknown");
+    }
+
+    println!();
 
     // HPET Configuration block
     println!("🔧 System Configuration");
@@ -297,7 +332,7 @@ fn check_hpet_status() -> io::Result<()> {
         .collect::<std::collections::HashMap<_, _>>();
 
     let hpet_status = match (hpet_status.get("useplatformtick").map(String::as_str), hpet_status.get("disabledynamictick").map(String::as_str)) {
-        (Some("no"), Some("yes")) => "disabled",
+        (Some("no"), Some("yes")) | (None, Some("yes")) | (None, None) => "disabled",
         _ => "enabled",
     };
 
