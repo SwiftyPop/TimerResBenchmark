@@ -82,12 +82,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
-name = "critical-section"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
-
-[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -233,22 +227,6 @@ dependencies = [
  "wasi",
  "windows-sys 0.52.0",
 ]
-
-[[package]]
-name = "mutex"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "706aafb18d2af4ca63914d350d107df0d1b4614073f94609b4b2df044be919f3"
-dependencies = [
- "critical-section",
- "mutex-traits",
-]
-
-[[package]]
-name = "mutex-traits"
-version = "0.999.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4af10831cabbbb239cbf0cd35007311f62dc7ea3a3d351da55ce855e7f371a3"
 
 [[package]]
 name = "ntapi"
@@ -489,7 +467,6 @@ dependencies = [
  "csv",
  "indicatif",
  "lazy_static",
- "mutex",
  "os_info",
  "raw-cpuid",
  "serde",
