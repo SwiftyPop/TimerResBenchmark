@@ -417,13 +417,11 @@ fn kill_process(process_name: &str) -> io::Result<()> {
 
     let mut found = false;
 
-    for (pid, process) in system.processes() {
+    for (_pid, process) in system.processes() {
         if process.name().eq_ignore_ascii_case(process_name) {
             if process.kill() {
-                println!("Killed process {} with PID {}", process_name, pid);
                 found = true;
             } else {
-                eprintln!("Failed to kill process {} with PID {}", process_name, pid);
                 return Err(Error::new(ErrorKind::Other, format!("Failed to kill process {}", process_name)));
             }
         }
