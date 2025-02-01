@@ -1,6 +1,5 @@
-use std::borrow::Cow;
 use io::ErrorKind;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::{self, BufWriter, Error, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -19,45 +18,70 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 use indicatif;
 use std::sync::Mutex;
+use comfy_table::{Cell, Color, ContentArrangement, Row, Table};
+use colored::Colorize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct BenchmarkingParameters {
-    #[serde(rename = "StartValue")]
+    #[serde(rename = "StartValue", deserialize_with = "validate_positive_f64")]
     start_value: f64,
-    #[serde(rename = "IncrementValue")]
+    #[serde(rename = "IncrementValue", deserialize_with = "validate_positive_f64")]
     increment_value: f64,
-    #[serde(rename = "EndValue")]
+    #[serde(rename = "EndValue", deserialize_with = "validate_positive_f64")]
     end_value: f64,
-    #[serde(rename = "SampleValue")]
+    #[serde(rename = "SampleValue", deserialize_with = "validate_positive_i32")]
     sample_value: i32,
 }
 
+fn validate_positive_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    if value > 0.0 {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom("Value must be positive"))
+    }
+}
+
+fn validate_positive_i32<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = i32::deserialize(deserializer)?;
+    if value > 0 {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom("Value must be positive"))
+    }
+}
+
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    use colored::*;
+
     // Create a dynamic separator using '=' characters
     let separator = "=".repeat(60);
     
     // Title Block
     println!("\n{}", separator);
-    println!("{:^60}", "🚀 Timer Resolution Benchmark Tool");
+    println!("{:^60}", "🚀 Timer Resolution Benchmark Tool".bold().cyan());
     println!("{}\n", separator);
 
     // Check admin privileges first - fail fast
     if !is_admin() {
-        eprintln!("❌ Error: Administrator privileges required!");
-        eprintln!("   Please run this program as Administrator.");
+        eprintln!("{} {}", "❌ Error:".bold().red(), "Administrator privileges required!".bold().red());
+        eprintln!("   {}", "Please run this program as Administrator.".bold().red());
         return Err(Error::new(ErrorKind::PermissionDenied, "Administrator privileges required"));
     }
 
     // System information block
-    println!("📊 System Information");
+    println!("{}", "📊 System Information".bold().yellow());
     println!("━━━━━━━━━━━━━━━━━━━");
     println!("📂 Working Directory: {}", env::current_dir()?.display());
-    println!("🛡️ Admin Privileges: ✓ Confirmed");
-
-    // Display current executable path
-    let exe_path = env::current_exe()?;
-    println!("🔍 Executable Path: {}", exe_path.display());
+    println!("🛡️ Admin Privileges: {}", "✓ Confirmed".bold().green());
 
     // Display OS information
     let os_info = os_info::get();
@@ -89,7 +113,7 @@ async fn main() -> io::Result<()> {
     println!();
 
     // HPET Configuration block
-    println!("🔧 System Configuration");
+    println!("{}", "🔧 System Configuration".bold().yellow());
     println!("━━━━━━━━━━━━━━━━━━━━");
     check_hpet_status()?;
     println!();
@@ -100,45 +124,39 @@ async fn main() -> io::Result<()> {
             .map_err(|e| Error::new(ErrorKind::InvalidData, e)))
     {
         Ok(mut params) => {
-            let mut input = Cow::Borrowed("");
-
-            let mut prompt = |desc: &str, current: &str| -> io::Result<Cow<'static, str>> {
+            let mut input = String::new();
+            let mut prompt = |desc: &str, current: &str| -> io::Result<Option<String>> {
                 println!("▸ {}: {} (current)", desc, current);
                 println!("Enter new {} (or press Enter to keep current): ", desc);
-                input.to_mut().clear();
-                io::stdin().read_line(input.to_mut())?;
-                Ok(Cow::Owned(input.trim().to_string()))
+                input.clear();
+                io::stdin().read_line(&mut input)?;
+                let trimmed = input.trim();
+                Ok(if trimmed.is_empty() { None } else { Some(trimmed.to_string()) })
             };
 
             println!("⚙️ Benchmark Parameters");
             println!("━━━━━━━━━━━━━━━━━━━");
 
-            if let Ok(new_value) = prompt("Start Value", &format!("{:.4} ms", params.start_value)) {
-                if !new_value.is_empty() {
-                    params.start_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
-                }
+            if let Some(new_value) = prompt("Start Value", &format!("{:.4} ms", params.start_value))? {
+                params.start_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
             }
-
-            if let Ok(new_value) = prompt("Increment Value", &format!("{:.4} ms", params.increment_value)) {
-                if !new_value.is_empty() {
-                    params.increment_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
-                }
+            if let Some(new_value) = prompt("Increment Value", &format!("{:.4} ms", params.increment_value))? {
+                params.increment_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
             }
-
-            if let Ok(new_value) = prompt("End Value", &format!("{:.4} ms", params.end_value)) {
-                if !new_value.is_empty() {
-                    params.end_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
-                }
+            if let Some(new_value) = prompt("End Value", &format!("{:.4} ms", params.end_value))? {
+                params.end_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
             }
-
-            if let Ok(new_value) = prompt("Sample Value", &params.sample_value.to_string()) {
-                if !new_value.is_empty() {
-                    params.sample_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
-                }
+            if let Some(new_value) = prompt("Sample Value", &params.sample_value.to_string())? {
+                params.sample_value = new_value.parse().map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
             }
 
             let iterations = ((params.end_value - params.start_value) / params.increment_value).ceil();
             println!("▸ Iterations:   {}\n", iterations as i32);
+
+            // Save updated parameters back to appsettings.json
+            if let Err(e) = fs::write("appsettings.json", serde_json::to_string_pretty(&params)?) {
+                eprintln!("❌ Failed to save updated parameters: {}", e);
+            }
 
             params
         },
@@ -202,9 +220,14 @@ async fn main() -> io::Result<()> {
     let progress_bar = indicatif::ProgressBar::new(total_iterations);
     progress_bar.set_style(
         indicatif::ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-            .unwrap()
-            .progress_chars("#>-")
+            .template(
+                "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} \n\
+                ▸ Current Resolution: {msg:.yellow} \n\
+                ▸ ETA: {eta_precise} | Iteration Time: {per_sec}"
+            )
+            .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))?
+            .progress_chars("█▓▒░ ")
+            .with_key("per_sec", |state: &indicatif::ProgressState, w: &mut dyn std::fmt::Write| write!(w, "{:.2}s/iter", state.per_sec()).unwrap())
     );
     progress_bar.enable_steady_tick(Duration::from_millis(100));
 
@@ -224,6 +247,7 @@ async fn main() -> io::Result<()> {
         if let Err(e) = set_timer_result {
             eprintln!("Failed to set timer resolution: {}", e);
         }
+        
 
         sleep(Duration::from_millis(1)).await;
 
@@ -266,35 +290,39 @@ async fn main() -> io::Result<()> {
         return Err(Error::new(ErrorKind::NotFound, "results.txt file not found"));
     }
 
-    // Read and process the results file
     let results_content = fs::read_to_string(&results_path)?;
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
         .from_reader(results_content.as_bytes());
 
-    let (optimal_resolution, _, _) = rdr.records()
-        .filter_map(|result| {
-            result.ok().and_then(|record| {
-                let requested_resolution: f64 = record[0].parse().ok()?;
-                let delta_ms: f64 = record[1].parse().ok()?;
-                let std_dev: f64 = record[2].parse().ok()?;
-                Some((requested_resolution, delta_ms, std_dev))
-            })
-        })
-        .fold((None, f64::MAX, f64::MAX), |(opt_res, min_delta, min_std), (res, delta, std)| {
-            if delta < min_delta || (delta == min_delta && std < min_std) {
-                (Some(res), delta, std)
-            } else {
-                (opt_res, min_delta, min_std)
-            }
-        });
+    let mut all_results = Vec::new();
+    let mut optimal_resolution = None;
+    let mut min_delta = f64::MAX;
+    let mut min_std = f64::MAX;
 
-    if let Some(resolution) = optimal_resolution {
-        println!("✅ Optimal Timer Resolution: {:.4} ms", resolution);
-    } else {
-        eprintln!("❌ Error: No valid data found in results.txt");
-        return Err(Error::new(ErrorKind::InvalidData, "No valid data found in results.txt"));
+    for result in rdr.records().filter_map(|r| r.ok()) {
+        if let (Ok(res), Ok(delta), Ok(std)) = (
+            result[0].parse::<f64>(),
+            result[1].parse::<f64>(),
+            result[2].parse::<f64>(),
+        ) {
+            all_results.push((res, delta, std));
+
+            // Find the optimal resolution
+            if delta < min_delta || (delta == min_delta && std < min_std) {
+                optimal_resolution = Some(res);
+                min_delta = delta;
+                min_std = std;
+            }
+        }
     }
+    // Call print_summary if valid results are found
+if let Some(resolution) = optimal_resolution {
+    print_summary(resolution, &all_results);
+} else {
+    eprintln!("❌ Error: No valid data found in results.txt");
+    return Err(Error::new(ErrorKind::InvalidData, "No valid data found in results.txt"));
+}
 
     println!("Benchmarking completed successfully");
 
@@ -308,6 +336,58 @@ fn prompt_exit() -> io::Result<()> {
     println!("Press Enter to exit...");
     io::stdin().read_line(&mut String::new())?;
     Ok(())
+}
+fn print_summary(optimal_res: f64, all_results: &[(f64, f64, f64)]) {
+    assert!(!all_results.is_empty(), "Cannot print summary of empty results");
+
+    let mut table = Table::new();
+    table.set_content_arrangement(ContentArrangement::Dynamic);
+    table.set_header(vec![
+        Cell::new("Resolution (ms)"),
+        Cell::new("Avg Δ (ms)"),
+        Cell::new("STDEV"),
+    ]);
+
+    let mut optimal_row_index = None;
+
+    for (i, &(res, avg, stdev)) in all_results.iter().enumerate() {
+        // Check if this row is optimal based on a tolerance
+        let is_optimal = (res - optimal_res).abs() < f64::EPSILON;
+        if is_optimal {
+            optimal_row_index = Some(i);
+        }
+
+        // Create cells with formatted numbers.
+        // We use comfy_table's Cell and its styling API, so the styling does not affect width calculations.
+        let res_cell = if is_optimal {
+            Cell::new(format!("{:>8.4}", res)).fg(Color::Green)
+        } else {
+            Cell::new(format!("{:>8.4}", res))
+        };
+        let avg_cell = if is_optimal {
+            Cell::new(format!("{:>8.4}", avg)).fg(Color::Green)
+        } else {
+            Cell::new(format!("{:>8.4}", avg))
+        };
+        let stdev_cell = if is_optimal {
+            Cell::new(format!("{:>8.4}", stdev)).fg(Color::Green)
+        } else {
+            Cell::new(format!("{:>8.4}", stdev))
+        };
+
+        let row = Row::from(vec![res_cell, avg_cell, stdev_cell]);
+        table.add_row(row);
+    }
+
+    assert!(optimal_row_index.is_some(), "Optimal resolution not found in results");
+
+    // Finally, print the table.
+    println!("{}", table);
+
+    // Print the header and optimal resolution.
+    println!("\n{}", "OPTIMAL RESOLUTION FOUND".green().bold());
+    println!("{}", "═════════════════════════");
+    println!("▸ {:>8.4} ms\n", optimal_res);
 }
     
 
@@ -324,39 +404,94 @@ fn check_hpet_status() -> io::Result<()> {
     }
 
     let output = Command::new("bcdedit")
-        .args(&["/enum", "{current}"])
+        .arg("/enum")
+        .arg("{current}")
         .output()?;
 
-    if !output.status.success() {
-        eprintln!("❌ Error: Failed to retrieve HPET status");
-        return Err(Error::new(ErrorKind::Other, "Failed to retrieve HPET status"));
-    }
-
     let output_str = String::from_utf8_lossy(&output.stdout);
-    let hpet_status = output_str.lines()
-        .filter_map(|line| {
-            let mut parts = line.split_whitespace();
-            match (parts.next(), parts.next()) {
-                (Some("useplatformtick"), Some(value)) => Some(("useplatformtick", value.to_lowercase())),
-                (Some("disabledynamictick"), Some(value)) => Some(("disabledynamictick", value.to_lowercase())),
-                _ => None,
-            }
-        })
-        .collect::<std::collections::HashMap<_, _>>();
-
-    let hpet_status = match (hpet_status.get("useplatformtick").map(String::as_str), hpet_status.get("disabledynamictick").map(String::as_str)) {
-        (Some("no"), Some("yes")) | (None, Some("yes")) | (None, None) => "disabled",
-        _ => "enabled",
-    };
+    let mut hpet_status = "disabled";
+    for line in output_str.lines() {
+        if line.contains("useplatformtick=no") || line.contains("disabledynamictick=yes") {
+            hpet_status = "enabled";
+            break;
+        }
+    }
 
     println!("HPET status: {}", hpet_status);
 
     if hpet_status == "enabled" {
         println!("⚠️ HPET is enabled. For optimal results, it is recommended to disable HPET.");
         println!("Please refer to the troubleshooting guide: https://github.com/SwiftyPop/TimerResBenchmark?tab=readme-ov-file#troubleshooting");
+
+        println!("Would you like to disable HPET now? (y/n): ");
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if input.trim().eq_ignore_ascii_case("y") {
+            if let Err(e) = disable_hpet() {
+                eprintln!("❌ Error: Failed to disable HPET: {}", e);
+                return Err(e);
+            }
+            println!("✅ HPET has been disabled. Please restart your computer for the changes to take effect.");
+        }
     }
 
     *status = Some(hpet_status.to_string());
+
+    Ok(())
+}
+
+fn disable_hpet() -> io::Result<()> {
+    let mut commands = vec![
+        {
+            let mut cmd = Command::new("bcdedit");
+            cmd.arg("/deletevalue").arg("useplatformclock");
+            cmd
+        },
+        {
+            let mut cmd = Command::new("bcdedit");
+            cmd.arg("/set").arg("disabledynamictick").arg("yes");
+            cmd
+        },
+    ];
+
+    if let Err(e) = apply_registry_tweak() {
+        eprintln!("❌ Error: Failed to apply registry tweak: {}", e);
+        return Err(e.into());
+    }
+
+    for command in commands.iter_mut() {
+        let output = command.output()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to disable HPET: {}", e)))?;
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Failed to disable HPET: {}", output.status),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn apply_registry_tweak() -> io::Result<()> {
+    let output = Command::new("reg")
+        .arg("add")
+        .arg(r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\kernel")
+        .arg("/v")
+        .arg("GlobalTimerResolutionRequests")
+        .arg("/t")
+        .arg("REG_DWORD")
+        .arg("/d")
+        .arg("1")
+        .arg("/f")
+        .output()?;
+
+    if !output.status.success() {
+        return Err(Error::new(
+            ErrorKind::Other,
+            "Failed to apply registry tweak",
+        ));
+    }
 
     Ok(())
 }
@@ -369,17 +504,18 @@ fn parse_measurement_output(output: &[u8]) -> io::Result<(f64, f64)> {
     let mut stdev = None;
 
     for line in output_str.lines() {
-        if let Some(value) = line.strip_prefix("Avg: ") {
-            avg = value.parse().ok();
-        } else if let Some(value) = line.strip_prefix("STDEV: ") {
-            stdev = value.parse().ok();
+        if avg.is_none() && line.starts_with("Avg: ") {
+            avg = line[5..].parse().ok();
+        } else if stdev.is_none() && line.starts_with("STDEV: ") {
+            stdev = line[7..].parse().ok();
+        }
+
+        if avg.is_some() && stdev.is_some() {
+            break;
         }
     }
 
-    match (avg, stdev) {
-        (Some(avg), Some(stdev)) => Ok((avg, stdev)),
-        _ => Err(Error::new(ErrorKind::InvalidData, "Invalid measurement output")),
-    }
+    avg.zip(stdev).ok_or_else(|| Error::new(ErrorKind::InvalidData, "Invalid measurement output"))
 }
 
 static IS_ADMIN: AtomicBool = AtomicBool::new(false);
