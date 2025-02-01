@@ -398,31 +398,67 @@ lazy_static::lazy_static! {
 fn check_hpet_status() -> io::Result<()> {
     let mut status = HPET_STATUS.lock().unwrap();
 
+    // Use the cached status if available.
     if let Some(ref cached_status) = *status {
         println!("HPET status (cached): {}", cached_status);
         return Ok(());
     }
 
+    // Run the bcdedit command to get the current boot configuration.
     let output = Command::new("bcdedit")
         .arg("/enum")
         .arg("{current}")
         .output()?;
 
+    if !output.status.success() {
+        eprintln!("❌ Error: Failed to retrieve HPET status");
+        return Err(Error::new(ErrorKind::Other, "Failed to retrieve HPET status"));
+    }
+
     let output_str = String::from_utf8_lossy(&output.stdout);
-    let mut hpet_status = "disabled";
+
+    // We'll capture the values for the two keys if they exist.
+    let mut useplatformclock_value: Option<String> = None;
+    let mut disabledynamictick_value: Option<String> = None;
+
     for line in output_str.lines() {
-        if line.contains("useplatformtick=no") || line.contains("disabledynamictick=yes") {
-            hpet_status = "enabled";
-            break;
+        let mut parts = line.split_whitespace();
+        if let (Some(key), Some(value)) = (parts.next(), parts.next()) {
+            match key.to_lowercase().as_str() {
+                "useplatformclock" => {
+                    useplatformclock_value = Some(value.to_lowercase());
+                }
+                "disabledynamictick" => {
+                    disabledynamictick_value = Some(value.to_lowercase());
+                }
+                _ => {}
+            }
         }
     }
 
+    // Decide HPET status.
+    // According to the requirement, if "useplatformclock" is absent and "disabledynamictick" is "yes",
+    // then we consider HPET as disabled.
+    let hpet_status = match (
+        useplatformclock_value.as_deref(),
+        disabledynamictick_value.as_deref(),
+    ) {
+        // If "useplatformclock" is present and equals "no", and disabledynamictick is "yes" → disabled.
+        (Some("no"), Some("yes")) => "disabled",
+        // If "useplatformclock" is absent but disabledynamictick is "yes" → disabled.
+        (None, Some("yes")) => "disabled",
+        // If both keys are absent, default to disabled.
+        (None, None) => "disabled",
+        // In all other cases, consider HPET as enabled.
+        _ => "enabled",
+    };
+
     println!("HPET status: {}", hpet_status);
 
+    // If HPET is enabled, notify the user and prompt to disable.
     if hpet_status == "enabled" {
         println!("⚠️ HPET is enabled. For optimal results, it is recommended to disable HPET.");
         println!("Please refer to the troubleshooting guide: https://github.com/SwiftyPop/TimerResBenchmark?tab=readme-ov-file#troubleshooting");
-
         println!("Would you like to disable HPET now? (y/n): ");
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
