@@ -18,6 +18,8 @@
   ![image](https://github.com/user-attachments/assets/c6cac925-f872-4ae7-b355-e203ce1996af)
 
 - **Rewritten in Rust** for better performance and less overhead.
+- GUI (under development)
+- Graph (under development)
 
 ---
 
