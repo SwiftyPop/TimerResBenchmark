@@ -4,6 +4,8 @@
 
 ![image](https://github.com/user-attachments/assets/72b39d18-94a8-4312-b7ac-d86f773520ce)
 
+![download_count](https://img.shields.io/github/downloads/SwiftyPop/TimerResBenchmark/total)
+
 
 ---
 
